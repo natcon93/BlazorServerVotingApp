@@ -1,0 +1,159 @@
+﻿@page "/"
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+
+@inherits PageBase
+<PageTitle>OngoingPolls</PageTitle>
+<MudCard>
+    <MudCardHeader>
+        <MudButton Href="/polls/0" Variant="Variant.Filled" Color="Color.Primary">Add Poll</MudButton>
+    </MudCardHeader>
+    <MudCardContent>
+        <MudExpansionPanels MultiExpansion="true">
+            @if (Polls == null)
+            {
+                <p>Polls Loading</p>
+            }
+            else
+            {
+                @foreach (var poll in Polls)
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <div class="row">
+                                <div class="col col-6">
+                                    <MudText>
+                                        @poll.Title
+                                    </MudText>
+                                </div>
+                                <div class="col col-6">
+                                    @if(@poll.EndTime > DateTime.Now)
+                                    {
+                                        var secondsRemaining = $"{@times[@poll.Id]} s";
+                                        <MudText>@secondsRemaining</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText>0</MudText>
+                                    }
+                                </div>
+                            </div>                                                        
+                        </TitleContent>
+                        <ChildContent>
+                            <EditForm Model="@pollVote" OnValidSubmit="CastVote">
+                                <DataAnnotationsValidator />
+                                <ValidationSummary />
+                                <MudRadioGroup T="PollOption" @bind-SelectedOption="@pollVote.PollOption" Required="true">
+                                    @foreach (var pollOption in @poll.PollOptions)
+                                    {
+                                        <MudRadio Option="@pollOption">@pollOption.Name</MudRadio>
+                                    }
+                                </MudRadioGroup>
+                                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary">Submit Vote</MudButton>
+                            </EditForm>
+                            @foreach(var pollOption in @poll.PollOptions){
+                                <p>@pollOption.Name : @pollOption.PollVotes.Count()</p>
+                            }
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            }
+        </MudExpansionPanels>
+    </MudCardContent>
+</MudCard>
+
+@code{
+    private HubConnection? hubConnection;
+    private IList<Poll> Polls { get; set; } = new List<Poll>();
+    public PollVote pollVote { get; set; } = new PollVote();
+    public Dictionary<int,int> times { get; set; } = new Dictionary<int, int>();
+    public Timer? secondsTimer;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        //get Polls from db
+        Polls = Context
+           .Poll
+           .Include(x => x.PollOptions)
+           .ThenInclude(x => x.PollVotes)
+           .Where(x => x.EndTime > DateTime.Now)
+           .OrderBy(x => x.EndTime)
+           .ToList();
+
+        foreach(Poll poll in Polls)
+        {
+            times[poll.Id] = (int)(@poll.EndTime - DateTime.Now).TotalSeconds;
+        }
+
+        //Timer
+        secondsTimer = new Timer(TimerInterval, new AutoResetEvent(true), 1000, 1000);
+
+        hubConnection = new HubConnectionBuilder()
+             .WithUrl(Navigation.ToAbsoluteUri("/pollHub"))
+             .Build();
+
+        hubConnection.On("DataUpdated", () =>
+        {
+            Polls = Context
+               .Poll
+               .Include(x => x.PollOptions)
+               .ThenInclude(x => x.PollVotes)
+               .Where(x => x.EndTime > DateTime.Now)
+               .OrderBy(x => x.EndTime)
+               .ToList();
+            InvokeAsync(StateHasChanged);
+
+        });
+        await hubConnection.StartAsync();
+    }
+
+    public string GetEditUrl(int id = 0) => $"/PollDetailsPage/{id}";
+
+    public async Task CastVote()
+    {
+        Context.PollVote.Add(pollVote);
+        await Context.SaveChangesAsync();
+        pollVote = new PollVote();
+
+        callUpdateData();
+    }
+
+    public bool IsConnected =>
+        hubConnection?.State == HubConnectionState.Connected;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    public void TimerInterval(object? stateInfo)
+    {
+        AutoResetEvent? autoEvent = (AutoResetEvent?)stateInfo;
+        foreach (Poll poll in Polls.ToList())
+        {
+            if (@poll.EndTime > DateTime.Now)
+            {
+                times[poll.Id] = (int)(@poll.EndTime - DateTime.Now).TotalSeconds;
+            }
+            else
+            {
+                callUpdateData();
+                break;
+            }
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async Task callUpdateData(){
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("UpdateData");
+        }
+    }
+}

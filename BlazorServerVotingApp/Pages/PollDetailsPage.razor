@@ -1,0 +1,73 @@
+﻿@page "/Polls/{Id:int}"
+@inherits EditablePageBase
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<EditForm Model="@poll" OnValidSubmit="CreatePoll">
+    <MudCard>
+        <MudCardContent>
+            <MudTextField T="string" Label="Title" HelperText="Title of the Poll" @bind-Value="@poll.Title"></MudTextField>
+            <MudNumericField T="int" Label="Poll Length" HelperText="How Long the Poll will run" @bind-Value="@runFor"></MudNumericField>
+            <MudText>Poll Options</MudText>
+            <MudPaper Outlined="true">
+            @foreach(var pollOption in poll.PollOptions)
+            {
+                <MudTextField @bind-Value="@pollOption.Name"></MudTextField>
+            }
+            </MudPaper>
+            <MudButton OnClick="AddPollOption">Add Option</MudButton>
+        </MudCardContent>
+        <MudCardActions>
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary">Submit</MudButton>
+        </MudCardActions>
+    </MudCard>
+</EditForm>
+@code {
+    private HubConnection? hubConnection;
+    public Poll poll { get; set; } = new Poll();
+    public int runFor;
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        poll.PollOptions.Add(new PollOption());
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/PollHub"))
+            .Build();
+        await hubConnection.StartAsync();
+    }
+
+    public async Task AddPollOption()
+    {
+        poll.PollOptions.Add(new PollOption());
+        StateHasChanged();
+    }
+
+    public async Task CreatePoll()
+    {
+        //update date to for poll
+        poll.Created = DateTime.Now;
+        poll.EndTime = DateTime.Now.AddMinutes(runFor);
+        Context.Poll.Add(poll);
+        await Context.SaveChangesAsync();
+        
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("UpdateData");
+        }
+        NavigationManager.NavigateTo("/");
+    }
+
+    public bool IsConnected =>
+        hubConnection?.State == HubConnectionState.Connected;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+}

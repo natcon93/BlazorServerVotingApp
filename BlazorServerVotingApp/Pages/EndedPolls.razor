@@ -1,0 +1,80 @@
+﻿@page "/EndedPolls"
+@inject NavigationManager Navigation
+
+
+
+@inherits PageBase
+<PageTitle>OngoingPolls</PageTitle>
+<MudCard>
+    <MudCardHeader>
+    </MudCardHeader>
+    <MudCardContent>
+        <MudExpansionPanels MultiExpansion="true">
+            @if (Polls == null)
+            {
+                <p>Polls Loading</p>
+            }
+            else
+            {
+                @foreach (var poll in Polls)
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <div class="row">
+                                <div class="col col-6">
+                                    <MudText>
+                                        @poll.Title
+                                    </MudText>
+                                </div>
+                                <div class="col col-6">
+                                    <MudText>@poll.Created - @poll.EndTime"</MudText>
+                                </div>
+                            </div>
+                        </TitleContent>
+                        <ChildContent>
+                            @foreach (var pollOption in @poll.PollOptions)
+                            {
+                                <p>@pollOption.Name : @pollOption.PollVotes.Count()</p>
+                            }
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            }
+        </MudExpansionPanels>
+    </MudCardContent>
+</MudCard>
+@code{
+    private HubConnection? hubConnection;
+    private IList<Poll> Polls { get; set; } = new List<Poll>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        //get Polls from db
+        Polls = Context
+           .Poll
+           .Include(x => x.PollOptions)
+           .ThenInclude(x => x.PollVotes)
+           .Where(x => x.EndTime <= DateTime.Now)
+           .OrderByDescending(x => x.EndTime)
+           .ToList();
+
+        hubConnection = new HubConnectionBuilder()
+          .WithUrl(Navigation.ToAbsoluteUri("/pollHub"))
+          .Build();
+
+        hubConnection.On("DataUpdated", () =>
+        {
+            Polls = Context
+               .Poll
+               .Include(x => x.PollOptions)
+               .ThenInclude(x => x.PollVotes)
+               .Where(x => x.EndTime <= DateTime.Now)
+               .OrderByDescending(x => x.EndTime)
+               .ToList();
+            InvokeAsync(StateHasChanged);
+
+        });
+        await hubConnection.StartAsync();
+    }
+}
