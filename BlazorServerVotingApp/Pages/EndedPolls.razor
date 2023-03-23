@@ -18,6 +18,10 @@
             {
                 @foreach (var poll in Polls)
                 {
+                    List<double> votes = new List<double>();
+                    List<string> labels = new List<string>();
+                    chartIndex = -1;
+
                     <MudExpansionPanel>
                         <TitleContent>
                             <div class="row">
@@ -27,15 +31,39 @@
                                     </MudText>
                                 </div>
                                 <div class="col col-6">
-                                    <MudText>@poll.Created - @poll.EndTime"</MudText>
+                                    <MudText>Title: @poll.Created - Ran at: @poll.EndTime - Winner: @poll.PollOptions[0].Name</MudText>
                                 </div>
                             </div>
                         </TitleContent>
                         <ChildContent>
-                            @foreach (var pollOption in @poll.PollOptions)
-                            {
-                                <p>@pollOption.Name : @pollOption.PollVotes.Count()</p>
-                            }
+                            <div class="row">
+                                <div class="col-md-6">
+                                    @{
+                                        var pLabels = poll
+                                                    .PollOptions
+                                                    .Select(x => x.Name)
+                                                    .ToArray();
+
+                                        var pVotes = poll
+                                            .PollOptions
+                                            .Select(x => (double)x.PollVotes.Count())
+                                            .ToArray();
+
+                                    }
+
+                                    @foreach (var pollOption in poll.PollOptions)
+                                    {
+                                        //labels.Add(pollOption.Name);
+                                        //votes.Add((double)pollOption.PollVotes.Count());
+                                        
+                                        <p>@pollOption.Name : @pollOption.PollVotes.Count()</p>
+                                    }
+                                </div>
+                                <div class="col-md-6">
+                                    <MudChart ChartType="ChartType.Donut" Width="300px" Height="300px"  InputData="@pVotes" InputLabels="@pLabels"></MudChart>
+                                </div>
+                            </div>
+                            
                         </ChildContent>
                     </MudExpansionPanel>
                 }
@@ -44,37 +72,52 @@
     </MudCardContent>
 </MudCard>
 @code{
+
+
+    private int chartIndex = -1;
     private HubConnection? hubConnection;
     private IList<Poll> Polls { get; set; } = new List<Poll>();
 
     protected override async Task OnInitializedAsync()
     {
-        await base.OnInitializedAsync();
-        //get Polls from db
-        Polls = Context
-           .Poll
-           .Include(x => x.PollOptions)
-           .ThenInclude(x => x.PollVotes)
-           .Where(x => x.EndTime <= DateTime.Now)
-           .OrderByDescending(x => x.EndTime)
-           .ToList();
-
-        hubConnection = new HubConnectionBuilder()
-          .WithUrl(Navigation.ToAbsoluteUri("/pollHub"))
-          .Build();
-
-        hubConnection.On("DataUpdated", () =>
+        using (var context = await DbContextFactory.CreateDbContextAsync())
         {
-            Polls = Context
+            await base.OnInitializedAsync();
+            //get Polls from db
+            Polls = context
                .Poll
-               .Include(x => x.PollOptions)
+               .Include(x => x.PollOptions.OrderByDescending(y => y.PollVotes.Count()))
                .ThenInclude(x => x.PollVotes)
                .Where(x => x.EndTime <= DateTime.Now)
                .OrderByDescending(x => x.EndTime)
                .ToList();
-            InvokeAsync(StateHasChanged);
 
-        });
-        await hubConnection.StartAsync();
+            hubConnection = new HubConnectionBuilder()
+              .WithUrl(Navigation.ToAbsoluteUri("/pollHub"))
+              .Build();
+
+            hubConnection.On("DataUpdated", async () =>
+            {
+                using (var context2 = await DbContextFactory.CreateDbContextAsync())
+                {
+                    Polls = context2
+                       .Poll
+                       .Include(x => x.PollOptions.OrderByDescending(y => y.PollVotes.Count()))
+                       .ThenInclude(x => x.PollVotes)
+                       .Where(x => x.EndTime <= DateTime.Now)
+                       .OrderByDescending(x => x.EndTime)
+                       .ToList();
+                    InvokeAsync(StateHasChanged);
+                }
+            });
+            await hubConnection.StartAsync();
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
     }
 }
